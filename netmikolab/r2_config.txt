@@ -1,0 +1,138 @@
+service timestamps debug datetime msec
+service timestamps log datetime msec
+no service password-encryption
+!
+hostname R2
+!
+boot-start-marker
+boot-end-marker
+!
+!
+vrf definition control
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition management
+ !
+ address-family ipv4
+ exit-address-family
+!
+!
+no aaa new-model
+!
+!
+!
+mmi polling-interval 60
+no mmi auto-configure
+no mmi pvc
+mmi snmp-timeout 180
+!
+!
+!
+!
+!
+no ip icmp rate-limit unreachable
+!
+!
+!
+!
+!
+!
+no ip domain lookup
+ip domain name ipa.com
+ip cef
+no ipv6 cef
+!
+multilink bundle-name authenticated
+!
+!
+!
+!
+username admin privilege 15 password 0 cisco
+!
+redundancy
+!
+no cdp log mismatch duplex
+!
+ip tcp synwait-time 5
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+interface Loopback0
+ vrf forwarding control
+ ip address 1.1.1.2 255.255.255.0
+ ip ospf 1 area 0
+!
+interface GigabitEthernet0/0
+ vrf forwarding management
+ ip address 172.31.21.5 255.255.255.240
+ duplex auto
+ speed auto
+ media-type rj45
+!
+interface GigabitEthernet0/1
+ vrf forwarding control
+ ip address 172.31.21.7 255.255.255.240
+ ip ospf 1 area 0
+ duplex auto
+ speed auto
+ media-type rj45
+!
+interface GigabitEthernet0/2
+ vrf forwarding control
+ ip address 192.168.10.1 255.255.255.0
+ ip nat inside
+ ip virtual-reassembly in
+ duplex auto
+ speed auto
+ media-type rj45
+!
+interface GigabitEthernet0/3
+ vrf forwarding control
+ ip address dhcp
+ ip nat outside
+ ip virtual-reassembly in
+ duplex auto
+ speed auto
+ media-type rj45
+!
+router ospf 1 vrf control
+ network 172.31.21.0 0.0.0.255 area 0
+ network 192.168.10.0 0.0.0.255 area 0
+ default-information originate always
+!
+ip forward-protocol nd
+!
+!
+no ip http server
+no ip http secure-server
+ip nat inside source list 1 interface GigabitEthernet0/3 vrf control overload
+ip route 10.30.6.0 255.255.255.0 172.31.21.1
+ip route vrf control 0.0.0.0 0.0.0.0 192.168.122.1
+ip route vrf management 0.0.0.0 0.0.0.0 172.31.21.1
+ip ssh version 2
+ip ssh pubkey-chain
+  username admin
+   key-hash ssh-rsa 0C71D996EDB1B6B00DFD0EC1B223BACF
+no ip ssh server authenticate user keyboard
+no ip ssh server authenticate user password
+!
+ipv6 ioam timestamp
+!
+!
+access-list 1 permit 172.31.21.0 0.0.0.255
+access-list 1 permit 192.168.10.0 0.0.0.255
+access-list 1 permit 192.168.122.0 0.0.0.255
+!
+control-plane
