@@ -1,0 +1,37 @@
+router:
+  ospf_process: 1
+  vrf_name: "control"
+  default_route: true
+  
+  ospf_networks:
+    - address: "172.31.21.0"
+      wildcard: "0.0.0.255"
+      area: 0
+    - address: "192.168.5.0"
+      wildcard: "0.0.0.255"
+      area: 0
+  
+  interfaces:
+    - name: "GigabitEthernet0/1"
+      vrf: "control"
+      ip_address: "172.31.21.7"
+      subnet_mask: "255.255.255.240"
+      shutdown: false
+      ospf:
+        process: 1
+        area: 0
+    
+    - name: "Loopback0"
+      vrf: "control"
+      ip_address: "1.1.1.2"
+      subnet_mask: "255.255.255.0"
+      shutdown: false
+      ospf:
+        process: 1
+        area: 0
+  
+  static_routes:
+    - vrf: "control"
+      destination: "0.0.0.0"
+      mask: "0.0.0.0"
+      next_hop: "192.168.122.1"

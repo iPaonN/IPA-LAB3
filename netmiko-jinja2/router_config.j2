@@ -1,0 +1,31 @@
+router ospf {{ ospf_process }} vrf {{ vrf_name }}
+{% for network in ospf_networks %}
+ network {{ network.address }} {{ network.wildcard }} area {{ network.area }}
+{% endfor %}
+{% if default_route %}
+ default-information originate always
+{% endif %}
+ exit
+
+{% for interface in interfaces %}
+interface {{ interface.name }}
+{% if interface.vrf %}
+ vrf forwarding {{ interface.vrf }}
+{% endif %}
+{% if interface.ip_address %}
+ ip address {{ interface.ip_address }} {{ interface.subnet_mask }}
+{% endif %}
+{% if interface.shutdown is defined and not interface.shutdown %}
+ no shutdown
+{% endif %}
+{% if interface.ospf %}
+ ip ospf {{ interface.ospf.process }} area {{ interface.ospf.area }}
+{% endif %}
+ exit
+{% endfor %}
+
+{% if static_routes %}
+{% for route in static_routes %}
+ip route vrf {{ route.vrf }} {{ route.destination }} {{ route.mask }} {{ route.next_hop }}
+{% endfor %}
+{% endif %}
