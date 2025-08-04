@@ -1,201 +1,95 @@
 #!/usr/bin/env python3
-"""Simple TextFSM lab - parse CDP neighbors and configure interfaces"""
 
-import re
+import os
 from netmiko import ConnectHandler
+from pathlib import Path
 
+current_dir = Path(__file__).parent
+templates_path = current_dir / "lib" / "python3.8" / "site-packages" / "ntc_templates" / "templates"
+if templates_path.exists():
+    os.environ['NET_TEXTFSM'] = str(templates_path)
 
-def parse_cdp_neighbors(cdp_output):
-    """Parse CDP output into simple neighbor list"""
-    neighbors = []
-    lines = cdp_output.strip().split('\n')
+devices = {
+    "R1": "172.31.21.4",
+    "R2": "172.31.21.5",
+    "S1": "172.31.21.3"
+}
+
+DEVICE_PARAMS = {
+    'device_type': 'cisco_ios',
+    'username': 'admin',
+    'use_keys': True,
+    'key_file': str(Path.home() / ".ssh" / "id_rsa"),
+    'timeout': 20
+}
+
+def connect_device(name):
+    """Connect to device"""
+    device_params = DEVICE_PARAMS.copy()
+    device_params.update({'host': devices[name]})
+    return ConnectHandler(**device_params)
+
+def set_description(conn, intf, description):
+    """Set interface description"""
+    commands = [
+        f'int {intf}',
+        f'description {description}',
+        'end'
+    ]
+    return conn.send_config_set(commands)
+
+def get_description(conn, intf):
+    """Get interface description"""
+    results = conn.send_command("show interfaces description", use_textfsm=True)
+    for result in results:
+        if result.get("port", "").lower() == intf.lower():
+            return result.get("description", "")
+    return ""
+
+def get_cdp(conn):
+    """Get CDP neighbors"""
+    return conn.send_command("show cdp neighbors detail", use_textfsm=True)
+
+def autoset_description(conn):
+    """Auto set descriptions"""
     
-    # Skip to data section
-    data_started = False
-    for line in lines:
-        line = line.strip()
-        if not line:
+    neighbors = get_cdp(conn)
+    
+    # Static PC and WAN connections
+    if conn.host == "172.31.21.4":  # R1
+        print("Setting on GigabitEthernet0/1: Connect to PC")
+        set_description(conn, "Gi0/1", "Connect to PC")
+    elif conn.host == "172.31.21.5":  # R2
+        print("Setting on GigabitEthernet0/3: Connect to WAN")
+        set_description(conn, "Gi0/3", "Connect to WAN")
+    elif conn.host == "172.31.21.3":  # S1
+        print("Setting on GigabitEthernet0/3: Connect to PC")
+        set_description(conn, "Gi0/3", "Connect to PC")
+    
+    for entry in neighbors:
+        local = entry.get("local_interface")
+        nbr = entry.get("neighbor_name")
+        nbr_intf = entry.get("neighbor_interface")
+        
+        if not all([local, nbr, nbr_intf]):
             continue
         
-        # Find data start
-        if 'Device ID' in line and 'Local Intrfce' in line:
-            data_started = True
-            continue
-        
-        # Skip non-data lines
-        if not data_started or 'Total cdp entries' in line:
-            continue
-        if any(x in line for x in ['Capability', 'Router', 'Bridge', 'Switch']):
-            continue
-        
-        # Parse neighbor data
-        parts = line.split()
-        if len(parts) >= 6:
-            device_id = parts[0]
-            local_int = parts[1]
-            
-            # Handle "Gig 0/1" format
-            if len(parts) >= 7 and parts[2].startswith(('0/', '1/', '2/', '3/')):
-                local_int = f"{parts[1]} {parts[2]}"
-                remote_int = parts[-1]
-            else:
-                remote_int = parts[-1]
-            
-            # Normalize interfaces
-            local_int = fix_interface(local_int)
-            remote_int = 'PC' if 'PC' in device_id else fix_interface(remote_int)
-            
-            neighbors.append({
-                'device_id': device_id,
-                'local_interface': local_int,
-                'remote_interface': remote_int
-            })
-    
-    return neighbors
-
-
-def fix_interface(interface):
-    """Fix interface names to full format"""
-    interface = interface.strip()
-    
-    # Convert short to long names
-    if interface.lower().startswith(('gig', 'gi')):
-        match = re.search(r'(\d+/\d+)', interface)
-        if match:
-            return f"GigabitEthernet{match.group(1)}"
-    elif interface.lower().startswith('fa'):
-        match = re.search(r'(\d+/\d+)', interface)
-        if match:
-            return f"FastEthernet{match.group(1)}"
-    
-    return interface
-
-
-def generate_interface_description(neighbor):
-    """Create description for interface"""
-    device_id = neighbor['device_id']
-    remote_int = neighbor['remote_interface']
-    
-    if 'PC' in device_id or remote_int == 'PC':
-        return "Connect to PC"
-    elif device_id == 'WAN':
-        return "Connect to WAN"
-    else:
-        # Shorten interface name for description
-        short_int = remote_int.replace('GigabitEthernet', 'G').replace('FastEthernet', 'F')
-        return f"Connect to {short_int} of {device_id}"
-
-
-def generate_config_commands(neighbors):
-    """Generate config commands from neighbors"""
-    commands = []
-    for neighbor in neighbors:
-        commands.append(f"interface {neighbor['local_interface']}")
-        commands.append(f"description {generate_interface_description(neighbor)}")
-    return commands
-
-
-def handle_special_cases(device_name, neighbors):
-    """Add special interfaces like R2 WAN and PC connections"""
-    updated_neighbors = neighbors.copy()
-    
-    if device_name == 'R1':
-        has_gi01 = any(n['local_interface'] == 'GigabitEthernet0/1' for n in neighbors)
-        if not has_gi01:
-            updated_neighbors.append({
-                'device_id': 'PC',
-                'local_interface': 'GigabitEthernet0/1',
-                'remote_interface': 'PC'
-            })
-    
-    elif device_name == 'R2':
-        has_wan = any(n['local_interface'] == 'GigabitEthernet0/3' for n in neighbors)
-        if not has_wan:
-            updated_neighbors.append({
-                'device_id': 'WAN',
-                'local_interface': 'GigabitEthernet0/3',
-                'remote_interface': 'WAN'
-            })
-    
-    elif device_name == 'S1':
-        has_gi03 = any(n['local_interface'] == 'GigabitEthernet0/3' for n in neighbors)
-        if not has_gi03:
-            updated_neighbors.append({
-                'device_id': 'PC',
-                'local_interface': 'GigabitEthernet0/3',
-                'remote_interface': 'PC'
-            })
-    
-    return updated_neighbors
-
-
-def configure_device(device):
-    """Configure one device"""
-    device_name = device['name']
-    try:
-        params = {k: v for k, v in device.items() if k != 'name'}
-        with ConnectHandler(**params) as conn:
-            cdp_output = conn.send_command("show cdp neighbors")
-            neighbors = parse_cdp_neighbors(cdp_output)
-            neighbors = handle_special_cases(device_name, neighbors)
-            commands = generate_config_commands(neighbors)
-            
-            if commands:
-                conn.send_config_set(commands)
-                return {'success': True, 'device': device_name, 'message': f"Configured {len(neighbors)} interfaces"}
-            else:
-                return {'success': True, 'device': device_name, 'message': "No interfaces to configure"}
-    except Exception as e:
-        return {'success': False, 'device': device_name, 'message': str(e)}
-
-class DeviceConnection:
-    def __init__(self, device):
-        self.device = device
-        self.connection = None
-    
-    def connect(self):
-        try:
-            params = {k: v for k, v in self.device.items() if k != 'name'}
-            self.connection = ConnectHandler(**params)
-            return True
-        except Exception as e:
-            print(f"Connection failed: {e}")
-            return False
-    
-    def disconnect(self):
-        if self.connection:
-            self.connection.disconnect()
-            self.connection = None
-
-
-class NetworkConfigManager:
-    def __init__(self, devices):
-        self.devices = devices
-    
-    def parse_cdp_neighbors(self, cdp_output):
-        return parse_cdp_neighbors(cdp_output)
-    
-    def generate_interface_description(self, neighbor):
-        return generate_interface_description(neighbor)
-    
-    def generate_config_commands(self, neighbors):
-        return generate_config_commands(neighbors)
-    
-    def handle_special_cases(self, device_name, neighbors):
-        return handle_special_cases(device_name, neighbors)
-    
-    def configure_device(self, device):
-        return configure_device(device)
-
+        short_intf = nbr_intf.replace('GigabitEthernet', 'G').replace('FastEthernet', 'F')
+        desc = f"Connect to {short_intf} of {nbr}"
+        print(f"Setting on {local}: {desc}")
+        set_description(conn, local, desc)
 
 if __name__ == '__main__':
-    devices = [
-        {'name': 'R1', 'device_type': 'cisco_ios', 'ip': '172.31.21.4', 'username': 'admin', 'key_file': '/home/devasc/.ssh/id_rsa', 'use_keys': True, 'conn_timeout': 20, 'disabled_algorithms': {'pubkeys': ['rsa-sha2-256', 'rsa-sha2-512']}},
-        {'name': 'R2', 'device_type': 'cisco_ios', 'ip': '172.31.21.5', 'username': 'admin', 'key_file': '/home/devasc/.ssh/id_rsa', 'use_keys': True, 'conn_timeout': 20, 'disabled_algorithms': {'pubkeys': ['rsa-sha2-256', 'rsa-sha2-512']}},
-        {'name': 'S1', 'device_type': 'cisco_ios', 'ip': '172.31.21.3', 'username': 'admin', 'key_file': '/home/devasc/.ssh/id_rsa', 'use_keys': True, 'conn_timeout': 20, 'disabled_algorithms': {'pubkeys': ['rsa-sha2-256', 'rsa-sha2-512']}}
-    ]
+    print("Configuring all devices...")
     
-    print("Configuring devices...")
-    for device in devices:
-        result = configure_device(device)
-        print(f"{result['device']}: {result['message']}")
+    for device_name in devices.keys():
+        print(f"\n--- Configuring {device_name} ---")
+        try:
+            conn = connect_device(device_name)
+            autoset_description(conn)
+            conn.disconnect()
+            print(f"✅ {device_name} configured")
+        except Exception as e:
+            print(f"❌ {device_name} failed: {e}")
+    
+    print("\nDone!")
