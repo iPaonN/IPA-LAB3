@@ -31,7 +31,8 @@ class NetworkDevice:
             'username': 'admin',
             'use_keys': True,
             'key_file': str(Path.home() / ".ssh" / "id_rsa"),
-            'timeout': 20
+            'timeout': 30,
+            'session_timeout': 30
         }
         
         # Connect to device
